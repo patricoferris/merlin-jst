@@ -2517,12 +2517,17 @@ module Const = struct
   let locality_as_regionality = C.locality_as_regionality
 end
 
+let comonadic_locality_as_regionality comonadic =
+  S.Positive.via_monotone Value.Comonadic.Obj.obj
+    (Map_comonadic Locality_as_regionality) comonadic
+
+let comonadic_regional_to_local comonadic =
+  S.Positive.via_monotone Alloc.Comonadic.Obj.obj
+    (Map_comonadic Regional_to_local) comonadic
+
 let alloc_as_value m =
   let { comonadic; monadic } = m in
-  let comonadic =
-    S.Positive.via_monotone Value.Comonadic.Obj.obj
-      (Map_comonadic Locality_as_regionality) comonadic
-  in
+  let comonadic = comonadic_locality_as_regionality comonadic in
   { comonadic; monadic }
 
 let alloc_to_value_l2r m =
@@ -2544,10 +2549,7 @@ let value_to_alloc_r2g : type l r. (l * r) Value.t -> (l * r) Alloc.t =
 
 let value_to_alloc_r2l m =
   let { comonadic; monadic } = m in
-  let comonadic =
-    S.Positive.via_monotone Alloc.Comonadic.Obj.obj
-      (Map_comonadic Regional_to_local) comonadic
-  in
+  let comonadic = comonadic_regional_to_local comonadic in
   { comonadic; monadic }
 
 module Modality = struct
@@ -2690,18 +2692,31 @@ module Modality = struct
       | Undefined -> Format.fprintf ppf "undefined"
       | Diff _ -> Format.fprintf ppf "diff"
 
+    (* All zapping functions mutate [mm] and [m] to the degree that's sufficient
+       to fix [subtract_mm m], and return it. [subtract] is antitone for [mm]
+       and monotone for [m]. *)
+
     let zap_to_floor = function
       | Const c -> c
       | Undefined -> Misc.fatal_error "modality Undefined should not be zapped."
       | Diff (mm, m) ->
-        (* For soundness, we want some [c] such that [m <= join c mm], which
-           gives [subtract_mm m <= c]. To satisfy coherence conditions (see
-           [mode_intf.ml]), we must zap [mm] and [m] fully. Note that [subtract]
-           is antitone for [mm] and monotone for [m], so we zap [mm] to ceil,
-           and [m] to floor, to get the floor of [c]. *)
-        let m = Mode.zap_to_floor m in
-        let mm = Mode.zap_to_ceil mm in
-        let c = Mode.Const.subtract m mm in
+        (* Ideally we will take [c = subtract_mm m] and zap it to floor.
+           However, [subtract] requires [mm] to be constant. We get the ceil of
+           [mm] to construct the floor of [c]. *)
+        let cc = Mode.Guts.get_ceil mm in
+        let c = Mode.subtract cc m in
+        let c = Mode.zap_to_floor c in
+        (* Note that we did not mutate [mm] but simply took its ceil, which
+           might be mutated later. To satisfy the coherence condition (see the
+           comment in the mli), we want to:
+
+           - make it impossible that [subtract_mm m < c], which is trivial since
+           [mm <= cc] and thus [subtract_mm m >= subtract_cc m = c].
+           - make it impossible that [subtract_mm m > c], which is to ensure
+           [subtract_mm m <= c], equivalently [m <= join_mm c], which is
+           achieved by the following [submode].
+        *)
+        Mode.submode_exn m (Mode.join_const c mm);
         Const.Join_const c
 
     let zap_to_id = zap_to_floor
@@ -2766,6 +2781,8 @@ module Modality = struct
             (let ax : _ Axis.t = Linearity in
              Atom (Comonadic ax, Meet_with (Axis.proj ax c)));
             (let ax : _ Axis.t = Portability in
+             Atom (Comonadic ax, Meet_with (Axis.proj ax c)));
+            (let ax : _ Axis.t = Yielding in
              Atom (Comonadic ax, Meet_with (Axis.proj ax c))) ]
 
       let proj ax = function
@@ -2828,19 +2845,31 @@ module Modality = struct
 
     let max = Const Const.max
 
+    (* All zapping functions mutate [mm] and [m] to the degree that's sufficient
+       to fix [imply_mm m], and return it. [imply] is antitone for [mm] and
+       monotone for [m]. *)
+
     let zap_to_ceil = function
       | Const c -> c
       | Undefined -> Misc.fatal_error "modality Undefined should not be zapped."
       | Exactly (mm, m) ->
-        (* For soundness and completeness, we need some [c] such that [meet_c mm
-           = m], or equivalently [c = imply mm m]. To satisfy the coherence
-           conditions listed in [mode_intf.ml], we need to zap [mm] and [m]
-           fully. [imply] is antitone in [mm] but monotone in [m] , so we zap
-           [mm] to strongest and [m] to weakest, in order to get the weakest
-           [c]. *)
-        let m = Mode.zap_to_ceil m in
-        let mm = Mode.zap_to_floor mm in
-        let c = Mode.Const.imply mm m in
+        (* Ideally we will take [c = imply_mm m] and zap it to ceil. However,
+           [imply] requires [mm] to be constant. We get the floor of [mm] to
+           construct the ceil of [c]. *)
+        let cc = Mode.Guts.get_floor mm in
+        let c = Mode.imply cc m in
+        let c = Mode.zap_to_ceil c in
+        (* Note that we did not mutate [mm] but simply took its floor, which
+           might be mutated later. To satisfy the coherence condition (see the
+           comment in the mli), we want to:
+
+           - make it impossible that [imply_mm m > c], which is trivial since
+           [mm >= cc] and thus [imply_mm m <= imply_cc m = c].
+           - make it impossible that [imply_mm m < c], which is to ensure
+           [imply_mm m >= c], equivalently [m >= meet_mm c], which is achieved
+           by the following [submode].
+        *)
+        Mode.submode_exn (Mode.meet_const c mm) m;
         Const.Meet_const c
 
     let zap_to_id = zap_to_ceil
@@ -2849,7 +2878,6 @@ module Modality = struct
       | Const c -> c
       | Undefined -> Misc.fatal_error "modality Undefined should not be zapped."
       | Exactly (mm, m) ->
-        (* Opposite to [zap_to_ceil]. *)
         let m = Mode.zap_to_floor m in
         let mm = Mode.zap_to_ceil mm in
         let c = Mode.Const.imply mm m in
@@ -2988,4 +3016,160 @@ module Modality = struct
       let comonadic = Comonadic.max in
       { monadic; comonadic }
   end
+end
+
+module Crossing = struct
+  (* The mode crossing capability of a type [t] is characterized by a monotone
+     function [f] from modes to some lattice [L], in the following way:
+
+     To check [e : t @ m0 <= m1], we should instead check [f m0 <= f m1] to
+     allow more programs.
+
+     For example, if [f] is the identity function, then [t] does not cross modes
+     at all. If [f] maps to the unit lattice (containing only one element), [f
+     m0 <= f m1] always succeeds, which means [t] crosses modes fully.
+
+     In practice, during mode checking we usually have either [m0] or [m1], but
+     not both. In order to perform mode crossing one-sided, we require [f] to
+     have left adjoint [fl] and right adjoint [fr], which gives:
+
+     [f m0 <= f m1] is equivalent to [fl (f m0) <= m1] is equivalent to [m0 <=
+     fr (f m1)]
+
+     Therefore, we can perform any of the following for mode crossing:
+     - Apply [f] on both [m0] and [m1]
+     - Apply [fl ∘ f] on [m0]
+     - Apply [fr ∘ f] on [m1]
+
+     Mode crossing forms a lattice: [f0 <= f1] iff [f0] allows more mode
+     crossing than [f1]. Concretely:
+
+     [f0 <= f1] iff, for any [m0, m1], if [f1 m0 <= f1 m1],
+     then [f0 m0 <= f0 m1].
+  *)
+
+  module Monadic = struct
+    module Modality = Modality.Monadic.Const
+    module Mode = Value.Monadic
+
+    type t = Modality.t
+
+    let of_bounds c : t = Join_const c
+
+    let modality m t = Modality.concat ~then_:t m
+
+    let apply_left : t -> _ -> _ = function
+      | Join_const c -> fun m -> Mode.subtract c (Mode.join_const c m)
+
+    let apply_right : t -> _ -> _ = function
+      | Join_const c ->
+        fun m ->
+          (* The right adjoint of join is a restriction of identity *)
+          Mode.join_const c m
+
+    let le (t0 : t) (t1 : t) =
+      match t0, t1 with Join_const c0, Join_const c1 -> Mode.Const.le c1 c0
+
+    let top : t = Join_const Mode.Const.min
+
+    let bot : t = Join_const Mode.Const.max
+  end
+
+  module Comonadic = struct
+    module Modality = Modality.Comonadic.Const
+    module Mode = Value.Comonadic
+
+    type t = Modality.t
+
+    let of_bounds c : t =
+      let c = C.apply Mode.Obj.obj (Map_comonadic Locality_as_regionality) c in
+      Meet_const c
+
+    let modality m t = Modality.concat ~then_:t m
+
+    let apply_left : t -> _ -> _ = function
+      | Meet_const c ->
+        fun m ->
+          (* The left adjoint of meet is a restriction of identity *)
+          Mode.meet_const c m
+
+    let apply_right : t -> _ -> _ = function
+      | Meet_const c -> fun m -> Mode.imply c (Mode.meet_const c m)
+
+    let le (t0 : t) (t1 : t) =
+      match t0, t1 with Meet_const c0, Meet_const c1 -> Mode.Const.le c0 c1
+
+    let top : t = Meet_const Mode.Const.max
+
+    let bot : t = Meet_const Mode.Const.min
+  end
+
+  type t = (Monadic.t, Comonadic.t) monadic_comonadic
+
+  let of_bounds { monadic; comonadic } =
+    let monadic = Monadic.of_bounds monadic in
+    let comonadic = Comonadic.of_bounds comonadic in
+    { monadic; comonadic }
+
+  let modality m { monadic; comonadic } =
+    let monadic = Monadic.modality m.monadic monadic in
+    let comonadic = Comonadic.modality m.comonadic comonadic in
+    { monadic; comonadic }
+
+  let apply_left t { monadic; comonadic } =
+    let monadic = Monadic.apply_left t.monadic monadic in
+    let comonadic = Comonadic.apply_left t.comonadic comonadic in
+    { monadic; comonadic }
+
+  let apply_right t { monadic; comonadic } =
+    let monadic = Monadic.apply_right t.monadic monadic in
+    let comonadic = Comonadic.apply_right t.comonadic comonadic in
+    { monadic; comonadic }
+
+  (* Our mode crossing is for [Value] modes, but can be extended to [Alloc]
+     modes via [alloc_as_value], defined as follows:
+
+     Given a mode crossing [f] for [Value], and we are to check [Alloc] submoding
+     [m0 <= m1], we will instead check
+     [f (alloc_as_value m0) <= f (alloc_as_value m1)].
+
+     By adjunction tricks, this is equivalent to
+     - [ m0 <= regional_to_global ∘ fr ∘ f ∘ alloc_as_value m1 ]
+     - [ regional_to_local ∘ fl ∘ f ∘ alloc_as_value m0 <= m1 ]
+     where [regional_to_global] is the right adjoint of [alloc_as_value], and
+     [regional_to_local] the left adjoint. *)
+
+  let apply_left_alloc t m =
+    m |> alloc_as_value |> apply_left t |> value_to_alloc_r2l
+
+  let apply_right_alloc t m =
+    m |> alloc_as_value |> apply_right t |> value_to_alloc_r2g
+
+  let apply_left_right_alloc t { monadic; comonadic } =
+    let monadic = Monadic.apply_right t.monadic monadic in
+    let comonadic =
+      comonadic |> comonadic_locality_as_regionality
+      |> Comonadic.apply_left t.comonadic
+      |> comonadic_regional_to_local
+      (* the left adjoint of [locality_as_regionality]*)
+    in
+    { monadic; comonadic }
+
+  let le t0 t1 =
+    Monadic.le t0.monadic t1.monadic && Comonadic.le t0.comonadic t1.comonadic
+
+  let top = { monadic = Monadic.top; comonadic = Comonadic.top }
+
+  let bot = { monadic = Monadic.bot; comonadic = Comonadic.bot }
+
+  let print ppf t =
+    let print_atom ppf = function
+      | Modality.Atom (ax, Join_with c) -> C.print (Value.proj_obj ax) ppf c
+      | Modality.Atom (ax, Meet_with c) -> C.print (Value.proj_obj ax) ppf c
+    in
+    let l =
+      t |> Modality.Value.Const.to_list
+      |> List.filter (fun t -> not @@ Modality.is_id t)
+    in
+    Format.(pp_print_list ~pp_sep:pp_print_space print_atom ppf l)
 end

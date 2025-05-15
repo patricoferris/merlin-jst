@@ -1150,6 +1150,9 @@ let import_crcs ~source crcs =
 let runtime_parameter_bindings () =
   Persistent_env.runtime_parameter_bindings !persistent_env
 
+let is_bound_to_runtime_parameter id =
+  Persistent_env.is_bound_to_runtime_parameter !persistent_env id
+
 let parameters () = Persistent_env.parameters !persistent_env
 
 let read_pers_mod modname cmi =
@@ -2925,7 +2928,7 @@ let add_language_extension_types env =
     |> add SIMD Stable Predef.add_simd_stable_extension_types
     |> add Small_numbers Stable Predef.add_small_number_extension_types
     |> add Small_numbers Beta Predef.add_small_number_beta_extension_types
-    |> add Layouts Beta Predef.add_or_null)
+    |> add Layouts Stable Predef.add_or_null)
 
 (* Some predefined types are part of language extensions, and we don't want to
    make them available in the initial environment if those extensions are not

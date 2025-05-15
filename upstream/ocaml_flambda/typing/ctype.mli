@@ -569,18 +569,25 @@ val package_subtype :
 (* Raises [Incompatible] *)
 val mcomp : Env.t -> type_expr -> type_expr -> unit
 
-(* A type with whether it has any unbound variables. This could easily
-   be changed to actually track the variables, if there is ever a need. *)
-type open_type_expr = { ty : type_expr; is_open : bool }
+(* represents a type that has been extracted from wrappers that
+   do not change its runtime representation, such as [@@unboxed]
+   types and [Tpoly]s *)
+type unwrapped_type_expr =
+  { ty : type_expr
+  ; is_open : bool  (* are there any unbound variables in this type? *)
+  ; modality : Mode.Modality.Value.Const.t }
 
 val get_unboxed_type_representation :
-  Env.t -> type_expr -> (open_type_expr, open_type_expr) result
+  Env.t ->
+  type_expr ->
+  (unwrapped_type_expr, unwrapped_type_expr) result
     (* [get_unboxed_type_representation] attempts to fully expand the input
        type_expr, descending through [@@unboxed] types.  May fail in the case of
        circular types or very deeply nested unboxed types, in which case it
        returns the most expanded version it was able to compute. *)
 
-val get_unboxed_type_approximation : Env.t -> type_expr -> open_type_expr
+val get_unboxed_type_approximation :
+  Env.t -> type_expr -> unwrapped_type_expr
     (* [get_unboxed_type_approximation] does the same thing as
        [get_unboxed_type_representation], but doesn't indicate whether the type
        was fully expanded or not. *)
@@ -713,3 +720,48 @@ val is_principal : type_expr -> bool
 type global_state
 val global_state : global_state
 val print_global_state : Format.formatter -> global_state -> unit
+
+(** Get the crossing of a jkind  *)
+val crossing_of_jkind : Env.t -> 'd Types.jkind -> Mode.Crossing.t
+
+(** Get the crossing of a type wrapped in modalities. Non-principal types get
+    trivial crossing. *)
+val crossing_of_ty :
+  Env.t ->
+  ?modalities:Mode.Modality.Value.Const.t ->
+  Types.type_expr ->
+  Mode.Crossing.t
+
+(** Cross a right mode according to a type wrapped in modalities. Non-principal
+    types don't cross. *)
+val cross_right :
+  Env.t ->
+  ?modalities:Mode.Modality.Value.Const.t ->
+  Types.type_expr ->
+  Mode.Value.r ->
+  Mode.Value.r
+
+(** Cross a left mode according to a type wrapped in modalities. Non-principal
+    types don't cross. *)
+val cross_left :
+  Env.t ->
+  ?modalities:Mode.Modality.Value.Const.t ->
+  Types.type_expr ->
+  Mode.Value.l ->
+  Mode.Value.l
+
+(** Similar to [cross_right] but for [Mode.Alloc]  *)
+val cross_right_alloc :
+  Env.t ->
+  ?modalities:Mode.Modality.Value.Const.t ->
+  Types.type_expr ->
+  Mode.Alloc.r ->
+  Mode.Alloc.r
+
+(** Similar to [cross_left] but for [Mode.Alloc]  *)
+val cross_left_alloc :
+  Env.t ->
+  ?modalities:Mode.Modality.Value.Const.t ->
+  Types.type_expr ->
+  Mode.Alloc.l ->
+  Mode.Alloc.l
