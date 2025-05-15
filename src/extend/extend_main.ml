@@ -101,7 +101,7 @@ module Handshake = struct
   exception Error of string
 
   let () =
-    Printexc.register_printer (function
+    Printexc.Safe.register_printer (function
       | Error msg -> Some (Printf.sprintf "Extend_main.Handshake.Error %S" msg)
       | _ -> None)
 

@@ -22,7 +22,7 @@ open Std
 
 exception Fatal_error of string * Printexc.raw_backtrace
 
-let () = Printexc.register_printer (function
+let () = Printexc.Safe.register_printer (function
     | Fatal_error (msg, bt) ->
       Some (Printf.sprintf "Fatal error: %s\n%s"
               msg (Printexc.raw_backtrace_to_string bt))
